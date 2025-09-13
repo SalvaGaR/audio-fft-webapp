@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Analizador de Audio — Onda • Espectro • Espectrograma</title>
+  <meta name="description" content="Webapp 100% cliente. Sube un audio y obtén metadatos, onda, espectro (FFT) y espectrograma (STFT) con mapas de color y exportaciones CSV/PNG." />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;600;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* Paleta inspirada en sites tipo awwwards */
+      --bg: #07080d;           /* base muy oscura */
+      --bg2: #0b0f1f;          /* segunda capa */
+      --glass: rgba(255,255,255,0.06);
+      --stroke: rgba(255,255,255,0.12);
+      --text: #edf2ff;
+      --muted: #a5b1d8;
+      --accent: #8ef6ff;       /* cian neón */
+      --accent2: #7effa9;      /* verde neón */
+      --hot: #ff7a9d;          /* rosa */
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(1200px 800px at 70% -10%, #121a3f 0%, var(--bg2) 40%),
+                  radial-gradient(900px 600px at -10% 110%, #1a224a 0%, var(--bg) 55%);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", Arial;
+      overflow-x: hidden;
+    }
+    /* Hero */
+    .hero {
+      position: relative; padding: 56px clamp(16px, 6vw, 64px) 10px; isolation: isolate;
+    }
+    .hero h1 {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-weight: 700; letter-spacing: -0.01em;
+      font-size: clamp(36px, 6.8vw, 92px);
+      line-height: 0.95; margin: 0 0 10px;
+      background: linear-gradient(90deg, #ffffff, #d5f5ff 35%, #b6ffdf 70%, #ffffff 100%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      text-shadow: 0 0 1px rgba(255,255,255,0.3);
+    }
+    .hero p { margin: 8px 0 0; color: var(--muted); font-size: clamp(14px, 1.4vw, 18px); }
+    .hero .tag {
+      display: inline-flex; gap: 8px; align-items: center; color: #061018; background: #a9ffee;
+      border-radius: 999px; padding: 6px 12px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color:#061018;
+      box-shadow: 0 10px 40px rgba(137, 255, 220, 0.35);
+    }
+    .orb { /* blob decorativo */
+      position: absolute; inset: -200px auto auto -80px; width: 480px; height: 480px; border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(142,246,255,.22), rgba(0,0,0,0)); filter: blur(6px);
+      transform: translateZ(0);
+      animation: float 8s ease-in-out infinite;
+    }
+    .orb.r { right: -120px; left: auto; inset: -160px -90px auto auto; background: radial-gradient(closest-side, rgba(126,255,169,.22), rgba(0,0,0,0)); animation-delay: -2s; }
+    @keyframes float { 0%,100%{ transform: translateY(0)} 50%{ transform: translateY(-12px)} }
+
+    /* Card glass */
+    .wrap { padding: 16px clamp(16px, 6vw, 64px) 40px; }
+    .grid { display: grid; gap: 18px; grid-template-columns: 1fr; }
+    @media (min-width: 1200px) { .grid { grid-template-columns: 420px 1fr; } }
+    .panel { position: relative; background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02));
+      border: 1px solid var(--stroke); border-radius: 22px; backdrop-filter: blur(8px); box-shadow: 0 30px 80px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05); }
+    .panel::after { content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04); }
+
+    .uploader { display: grid; gap: 14px; grid-template-columns: 1fr; padding: 18px; }
+    label { font-weight: 700; letter-spacing: .02em; margin-bottom: 6px; display:block; font-family: 'Space Grotesk', sans-serif; }
+    input[type="file"], select, button, input[type="range"] {
+      background: rgba(255,255,255,0.06); border: 1px solid var(--stroke); color: var(--text); padding: 12px 14px; border-radius: 14px; font-weight: 600;
+    }
+    input[type="file"] { width: 100%; border-style: dashed; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .btn { display: inline-flex; align-items: center; gap: 10px; justify-content: center; border-radius: 14px; cursor: pointer; font-weight: 800; letter-spacing:.02em; }
+    .btn.primary { background: linear-gradient(90deg, var(--accent) 0%, #6cf3d6 100%); color: #00141b; border: none; box-shadow: 0 10px 50px rgba(142,246,255,.35); }
+    .btn.secondary { background: linear-gradient(90deg, #1b2142, #0f1226); }
+    .btn:active { transform: translateY(1px); }
+    .spinner { width: 16px; height: 16px; border: 3px solid rgba(255,255,255,0.2); border-top-color: rgba(255,255,255,0.85); border-radius: 50%; animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .note { color: var(--accent); font-size: 12px; }
+
+    .stats { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; padding: 8px; }
+    .stat { background: rgba(255,255,255,0.04); border:1px solid var(--stroke); border-radius: 12px; padding: 10px 12px; }
+    .stat b { display:block; font-size: 11px; color: var(--muted); font-weight: 700; letter-spacing:.06em; text-transform: uppercase; }
+    .stat span { font-variant-numeric: tabular-nums; font-weight: 800; font-family: 'Space Grotesk', sans-serif; }
+
+    .views { display: grid; gap: 12px; padding: 12px; }
+    .view { background: rgba(255,255,255,0.04); border: 1px solid var(--stroke); border-radius: 18px; padding: 8px 10px 12px; position:relative; overflow:hidden; }
+    .view h3 { margin: 8px 12px 6px; font-size: 15px; color: #dbe7ff; font-family: 'Space Grotesk', sans-serif; letter-spacing:.02em; }
+
+    .canvas-wrap { position: relative; height: 240px; padding: 8px; }
+    .canvas-wrap.tall { height: 420px; }
+    canvas { width: 100%; height: 100%; display:block; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border: 1px solid var(--stroke); border-radius: 12px; }
+
+    .legend { display:flex; gap:10px; align-items:center; color: var(--muted); font-size: 12px; padding: 4px 12px 6px; }
+    .legend .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent2); box-shadow: 0 0 12px var(--accent2); }
+
+    .colorbar { position: absolute; top: 12px; right: 12px; width: 14px; bottom: 12px; border-radius: 8px; border: 1px solid var(--stroke); overflow: hidden; background: rgba(0,0,0,.25); }
+    .colorbar canvas { width: 100%; height: 100%; border: none; border-radius: 0; }
+    .cb-labels { position:absolute; top: 8px; right: 34px; color: var(--muted); font-size: 11px; text-align:right; }
+
+    .footer { color: var(--muted); text-align:center; font-size: 12px; padding: 18px; }
+
+    details { background: rgba(255,255,255,0.03); border: 1px solid var(--stroke); border-radius: 12px; padding: 10px 12px; }
+    summary { cursor: pointer; font-weight: 800; color: #cfe0ff; font-family: 'Space Grotesk', sans-serif; }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <div class="tag">Web Audio • FFT • STFT</div>
+    <h1>Analizador de Audio<br>en tu Navegador</h1>
+    <p>Sube un archivo y obtén <strong>metadatos</strong>, <strong>onda</strong>, <strong>espectro</strong> y <strong>espectrograma</strong> con mapas de color. Todo local, sin subir nada.</p>
+    <div class="orb"></div><div class="orb r"></div>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+      <!-- Panel izquierdo: carga y controles -->
+      <section class="panel uploader" aria-label="Panel de control">
+        <div>
+          <label for="file">Archivo de audio</label>
+          <input id="file" type="file" accept="audio/*" />
+          <div class="hint">Se procesa en tu navegador con Web Audio API. No se sube a ningún servidor.</div>
+        </div>
+
+        <div class="controls">
+          <div>
+            <label for="fftSize">Tamaño FFT (STFT)</label>
+            <select id="fftSize">
+              <option>1024</option>
+              <option>2048</option>
+              <option selected>4096</option>
+              <option>8192</option>
+              <option>16384</option>
+            </select>
+          </div>
+          <div>
+            <label for="overlap">Solape</label>
+            <select id="overlap">
+              <option value="0.25">25%</option>
+              <option value="0.5" selected>50%</option>
+              <option value="0.75">75%</option>
+            </select>
+          </div>
+          <div>
+            <label for="channel">Canal</label>
+            <select id="channel">
+              <option value="mix" selected>Mezcla (L+R)/2</option>
+              <option value="0">Canal 1 (L)</option>
+              <option value="1">Canal 2 (R)</option>
+            </select>
+          </div>
+          <div>
+            <label for="scale">Escala espectro</label>
+            <select id="scale">
+              <option value="db" selected>dB (0 = pico)</option>
+              <option value="lin">Lineal</option>
+            </select>
+          </div>
+          <div>
+            <label for="cmap">Mapa de colores</label>
+            <select id="cmap">
+              <option value="turbo" selected>Turbo (Google)</option>
+              <option value="viridis">Viridis</option>
+              <option value="inferno">Inferno</option>
+              <option value="magma">Magma</option>
+              <option value="plasma">Plasma</option>
+              <option value="gray">Grayscale</option>
+              <option value="heat">Heat</option>
+            </select>
+          </div>
+          <div>
+            <label for="dynRange">Rango dinámico (dB)</label>
+            <input id="dynRange" type="range" min="40" max="120" value="100" />
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end; align-items:center; margin-top: 8px;">
+          <button id="analyze" class="btn primary" disabled>
+            <span class="spinner" aria-hidden="true" style="display:none" id="spin"></span>
+            <span>Analizar</span>
+          </button>
+          <button id="downloadCsv" class="btn secondary" disabled>CSV espectro</button>
+          <button id="saveSpec" class="btn secondary" disabled>PNG espectrograma</button>
+        </div>
+
+        <div class="stats" aria-live="polite" id="stats" hidden>
+          <div class="stat"><b>Nombre</b><span id="fname">—</span></div>
+          <div class="stat"><b>Tipo</b><span id="ftype">—</span></div>
+          <div class="stat"><b>Tamaño</b><span id="fsize">—</span></div>
+          <div class="stat"><b>Duración</b><span id="dur">—</span></div>
+          <div class="stat"><b>Frecuencia de muestreo</b><span id="sr">—</span></div>
+          <div class="stat"><b>Canales</b><span id="ch">—</span></div>
+          <div class="stat"><b>Bitrate aprox.</b><span id="br">—</span></div>
+          <div class="stat"><b>Bit depth (WAV)</b><span id="bd">—</span></div>
+        </div>
+
+        <details>
+          <summary>¿Qué hace?</summary>
+          <p>Decodifica con <em>Web Audio API</em> y calcula: (1) Onda (envelope min/max), (2) Espectro promedio (Welch) y (3) Espectrograma (STFT con Hann y solape configurable). Exporta el espectro a CSV y el espectrograma a PNG.</p>
+        </details>
+      </section>
+
+      <!-- Panel derecho: visualizaciones -->
+      <section class="panel views" aria-label="Visualizaciones">
+        <div class="view" id="waveView">
+          <h3>Onda de audio</h3>
+          <div class="canvas-wrap">
+            <canvas id="waveCanvas" aria-label="Onda de audio" role="img"></canvas>
+          </div>
+        </div>
+        <div class="view" id="specView">
+          <h3>Espectrograma</h3>
+          <div class="canvas-wrap tall" style="position:relative;">
+            <canvas id="specCanvas" aria-label="Espectrograma" role="img"></canvas>
+            <div class="colorbar"><canvas id="cbCanvas"></canvas></div>
+            <div class="cb-labels"><div id="cbTop">0 dB</div><div style="position:absolute; bottom:0; right:0;" id="cbBottom">-100 dB</div></div>
+          </div>
+        </div>
+        <div class="view" id="spectrumView">
+          <h3>Espectro promedio (magnitud)</h3>
+          <div class="legend"><span class="dot"></span> Magnitud relativa (0 dB = pico)</div>
+          <div class="canvas-wrap">
+            <canvas id="spectrumCanvas" aria-label="Espectro de magnitud" role="img"></canvas>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <p class="footer">Hecho con ❤️ usando HTML + CSS + JS. Sube este <em>index.html</em> a GitHub Pages y listo.</p>
+  </div>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+  const fileInput = $('#file');
+  const btn = $('#analyze');
+  const spin = $('#spin');
+  const csvBtn = $('#downloadCsv');
+  const saveSpecBtn = $('#saveSpec');
+  const dynRange = $('#dynRange');
+  const cmapSel = $('#cmap');
+  const opts = { fftSize: $('#fftSize'), overlap: $('#overlap'), channel: $('#channel'), scale: $('#scale') };
+
+  const waveCanvas = $('#waveCanvas');
+  const spectrumCanvas = $('#spectrumCanvas');
+  const specCanvas = $('#specCanvas');
+  const waveCtx = waveCanvas.getContext('2d');
+  const spectrumCtx = spectrumCanvas.getContext('2d');
+  const specCtx = specCanvas.getContext('2d');
+  const cbCanvas = $('#cbCanvas');
+  const cbCtx = cbCanvas.getContext('2d');
+  const stats = { wrap: $('#stats'), fname: $('#fname'), ftype: $('#ftype'), fsize: $('#fsize'), dur: $('#dur'), sr: $('#sr'), ch: $('#ch'), br: $('#br'), bd: $('#bd') };
+  const cbTop = $('#cbTop'); const cbBottom = $('#cbBottom');
+
+  let audioBuffer = null; let lastSpectrum = null; let lastSpectrogram = null; let lastChannelData = null; let currentFile = null;
+
+  fileInput.addEventListener('change', () => {
+    btn.disabled = !fileInput.files?.length;
+    csvBtn.disabled = true; saveSpecBtn.disabled = true;
+    if (fileInput.files?.length) btn.focus();
+  });
+
+  btn.addEventListener('click', async () => {
+    if (!fileInput.files?.length) return;
+    try { setBusy(true);
+      currentFile = fileInput.files[0];
+      audioBuffer = await decodeFile(currentFile);
+      const chSel = opts.channel.value; const data = getChannelData(audioBuffer, chSel); lastChannelData = data;
+      drawWaveform(data, audioBuffer.sampleRate);
+      const N = parseInt(opts.fftSize.value, 10); const ov = parseFloat(opts.overlap.value);
+      const { freqs, magsLin, magsDb, sr, frames } = spectrumWelch(data, audioBuffer.sampleRate, N, ov);
+      lastSpectrum = { freqs, magsLin, magsDb, sr, N, frames };
+      renderSpectrum(lastSpectrum, opts.scale.value);
+      const dyn = parseInt(dynRange.value, 10);
+      lastSpectrogram = await renderSpectrogram(data, audioBuffer.sampleRate, N, ov, dyn, cmapSel.value);
+      csvBtn.disabled = false; saveSpecBtn.disabled = false;
+      setStats(currentFile, audioBuffer);
+    } catch (e) { console.error(e); alert('Error analizando audio: ' + (e?.message || e)); }
+    finally { setBusy(false); }
+  });
+
+  opts.scale.addEventListener('change', () => { if (lastSpectrum) renderSpectrum(lastSpectrum, opts.scale.value); });
+  dynRange.addEventListener('input', () => { if (lastSpectrogram) rerenderSpectrogram(lastSpectrogram, parseInt(dynRange.value,10), cmapSel.value); });
+  cmapSel.addEventListener('change', () => { if (lastSpectrogram) rerenderSpectrogram(lastSpectrogram, parseInt(dynRange.value,10), cmapSel.value); });
+  $('#channel').addEventListener('change', () => { if (audioBuffer) { const data = getChannelData(audioBuffer, opts.channel.value); lastChannelData = data; drawWaveform(data, audioBuffer.sampleRate); } });
+
+  csvBtn.addEventListener('click', () => {
+    if (!lastSpectrum) return;
+    const { freqs, magsDb, magsLin } = lastSpectrum;
+    const isDb = opts.scale.value === 'db';
+    const lines = ['freq_hz,' + (isDb ? 'mag_db' : 'mag_linear')];
+    for (let i = 0; i < freqs.length; i++) lines.push(freqs[i].toFixed(6) + ',' + (isDb ? magsDb[i].toFixed(6) : magsLin[i].toFixed(9)));
+    // FIX: usar "\n" en lugar de salto de línea literal que rompía el script
+    const blob = new Blob([lines.join('\n')], {type: 'text/csv;charset=utf-8;'});
+    downloadBlob(blob, 'spectrum_' + Date.now() + '.csv');
+  });
+
+  saveSpecBtn.addEventListener('click', () => {
+    const png = specCanvas.toDataURL('image/png'); const a = document.createElement('a'); a.href = png; a.download = 'spectrogram_' + Date.now() + '.png'; a.click();
+  });
+
+  function setBusy(b){ btn.disabled = b; spin.style.display = b ? 'inline-block' : 'none'; }
+
+  async function decodeFile(file){
+    const arrayBuf = await file.arrayBuffer();
+    // Preferir OfflineAudioContext; si falla, usar AudioContext estándar como fallback
+    try {
+      const TmpCtx = (window.OfflineAudioContext || window.webkitOfflineAudioContext);
+      const tmp = new TmpCtx(1, 1, 44100);
+      return await new Promise((resolve, reject) => { tmp.decodeAudioData(arrayBuf.slice(0), resolve, reject); });
+    } catch (err) {
+      const AC = (window.AudioContext || window.webkitAudioContext);
+      if (!AC) throw err;
+      const ac = new AC({ sampleRate: 44100 });
+      try {
+        return await new Promise((resolve, reject) => {
+          // Soportar ambas firmas (promesa y callbacks)
+          const p = ac.decodeAudioData(arrayBuf.slice(0), resolve, reject);
+          if (p && typeof p.then === 'function') p.then(resolve).catch(reject);
+        });
+      } finally { ac.close && ac.close(); }
+    }
+  }
+
+  function getChannelData(buffer, channel){
+    const ch = (channel === 'mix') ? -1 : (parseInt(channel, 10) | 0); const nCh = buffer.numberOfChannels;
+    if (ch >= 0 && ch < nCh) return buffer.getChannelData(ch);
+    const len = buffer.length; const out = new Float32Array(len);
+    for (let c = 0; c < nCh; c++) { const data = buffer.getChannelData(c); for (let i = 0; i < len; i++) out[i] += data[i]; }
+    for (let i = 0; i < len; i++) out[i] /= nCh; return out;
+  }
+
+  function setStats(file, buffer){
+    stats.wrap.hidden = false;
+    stats.fname.textContent = file.name || '—';
+    stats.ftype.textContent = file.type || inferTypeFromName(file.name) || 'desconocido';
+    stats.fsize.textContent = (file.size/1024/1024).toFixed(2) + ' MB';
+    stats.dur.textContent = buffer.duration.toFixed(2) + ' s';
+    stats.sr.textContent = buffer.sampleRate.toFixed(0) + ' Hz';
+    stats.ch.textContent = buffer.numberOfChannels;
+    const bitrate = file.size && buffer.duration ? (file.size * 8 / buffer.duration / 1000) : 0; // kbps medio aprox
+    stats.br.textContent = bitrate ? bitrate.toFixed(0) + ' kbps (aprox.)' : '—';
+    readWavBitDepth(file).then(bits => { stats.bd.textContent = bits || '—'; }).catch(()=>{ stats.bd.textContent = '—'; });
+    const dyn = parseInt(dynRange.value,10); cbTop.textContent = '0 dB'; cbBottom.textContent = '-' + dyn + ' dB';
+    drawColorbar(cmapSel.value);
+  }
+
+  function inferTypeFromName(name){ if (!name) return ''; const ext = name.split('.').pop().toLowerCase(); const map = { wav:'audio/wav', mp3:'audio/mpeg', m4a:'audio/mp4', aac:'audio/aac', flac:'audio/flac', ogg:'audio/ogg', opus:'audio/opus' }; return map[ext] || ''; }
+
+  async function readWavBitDepth(file){ if (!file || !(file.name||'').toLowerCase().endsWith('.wav')) return ''; const slice = await file.slice(0, 44).arrayBuffer(); const dv = new DataView(slice); const riff = String.fromCharCode(dv.getUint8(0),dv.getUint8(1),dv.getUint8(2),dv.getUint8(3)); const wave = String.fromCharCode(dv.getUint8(8),dv.getUint8(9),dv.getUint8(10),dv.getUint8(11)); if (riff !== 'RIFF' || wave !== 'WAVE') return ''; const bits = dv.getUint16(34, true); return bits ? (bits + ' bit') : ''; }
+
+  function drawWaveform(signal, sr){
+    fitCanvasToParent(waveCanvas, waveCtx, 2);
+    const { width: W, height: H } = waveCanvas; waveCtx.setTransform(1,0,0,1,0,0);
+    waveCtx.clearRect(0,0,W,H);
+    // rejilla
+    waveCtx.strokeStyle = 'rgba(255,255,255,0.08)'; waveCtx.lineWidth = 1;
+    for (let i=0;i<=6;i++){ const y = 10 + (H-20)*i/6; waveCtx.beginPath(); waveCtx.moveTo(10,y); waveCtx.lineTo(W-10,y); waveCtx.stroke(); }
+    // eje central
+    waveCtx.strokeStyle = 'rgba(255,255,255,0.25)'; waveCtx.beginPath(); waveCtx.moveTo(10, H/2); waveCtx.lineTo(W-10, H/2); waveCtx.stroke();
+    // downsample en buckets (min/max)
+    const dpr = Math.min(window.devicePixelRatio||1,2); const buckets = Math.floor((W-20)/dpr); const step = Math.ceil(signal.length / buckets);
+    const mid = H/2; const amp = (H-30)/2; waveCtx.strokeStyle = 'rgba(142, 246, 255, 0.95)'; waveCtx.lineWidth = 1;
+    waveCtx.beginPath(); let x = 10; const dx = (W-20) / buckets;
+    for (let i = 0; i < buckets; i++){
+      const start = i*step; const end = Math.min(start+step, signal.length);
+      let min = 1, max = -1; for (let j=start;j<end;j++){ const v = signal[j]; if (v<min) min=v; if (v>max) max=v; }
+      waveCtx.moveTo(x, mid + (-max)*amp); waveCtx.lineTo(x, mid + (-min)*amp); x += dx;
+    }
+    waveCtx.stroke();
+  }
+
+  function spectrumWelch(signal, sr, N, overlap){ const len = signal.length; if (len <= N) return spectrumSingleWindow(signal, sr, N);
+    const hop = Math.max(1, Math.floor(N * (1 - overlap))); const frames = 1 + Math.floor((len - N) / hop);
+    const win = hann(N); const acc = new Float64Array(N>>1); const re = new Float64Array(N); const im = new Float64Array(N);
+    for (let f=0, off=0; f<frames; f++, off+=hop){ for (let i=0;i<N;i++){ re[i] = signal[off+i] * win[i]; im[i]=0; } fftRadix2(re, im); for (let k=0;k<acc.length;k++){ const vr=re[k], vi=im[k]; acc[k] += vr*vr + vi*vi; } }
+    for (let k=0;k<acc.length;k++) acc[k] /= frames; const maxPow = Math.max(...acc) || 1e-18; const magsLin = new Float64Array(acc.length); const magsDb = new Float64Array(acc.length);
+    for (let k=0;k<acc.length;k++){ const rel = acc[k]/maxPow; magsLin[k] = Math.sqrt(rel); magsDb[k] = 10*Math.log10(Math.max(rel,1e-18)); }
+    const freqs = new Float64Array(acc.length); for (let k=0;k<acc.length;k++) freqs[k] = (k*sr)/N; return { freqs, magsLin, magsDb, sr, frames };
+  }
+  function spectrumSingleWindow(signal, sr, N){ const seg = extractCentered(signal, N); const win=hann(N); const re=new Float64Array(N); const im=new Float64Array(N);
+    for (let i=0;i<N;i++) re[i] = seg[i]*win[i]; fftRadix2(re, im); const half = N>>1; const mags = new Float64Array(half);
+    for (let k=0;k<half;k++){ const vr=re[k], vi=im[k]; mags[k]=Math.hypot(vr,vi); } const maxMag = Math.max(...mags) || 1e-12; const magsLin=new Float64Array(half); const magsDb=new Float64Array(half);
+    for (let k=0;k<half;k++){ const m=mags[k]/maxMag; magsLin[k]=m; magsDb[k]=20*Math.log10(Math.max(m,1e-12)); } const freqs=new Float64Array(half); for (let k=0;k<half;k++) freqs[k]=(k*sr)/N; return { freqs, magsLin, magsDb, sr, frames:1 };
+  }
+  function extractCentered(signal, N){ const out=new Float32Array(N); if (signal.length>=N){ const start=((signal.length-N)/2)|0; out.set(signal.subarray(start,start+N)); } else { out.set(signal); } return out; }
+  function hann(N){ const w=new Float64Array(N); for(let n=0;n<N;n++) w[n]=0.5*(1-Math.cos((2*Math.PI*n)/(N-1))); return w; }
+  function bitReverse(x,bits){ let y=0; for(let i=0;i<bits;i++){ y=(y<<1)|(x&1); x>>=1; } return y>>>0; }
+  function fftRadix2(re, im){ const N=re.length; if ((N&(N-1))!==0) throw new Error('N debe ser potencia de 2'); const bits=Math.log2(N)|0; for(let i=0;i<N;i++){ const j=bitReverse(i,bits); if(j>i){ let tr=re[i]; re[i]=re[j]; re[j]=tr; tr=im[i]; im[i]=im[j]; im[j]=tr; } }
+    for(let len=2; len<=N; len<<=1){ const ang=-2*Math.PI/len; const wpr=Math.cos(ang), wpi=Math.sin(ang); for(let i=0;i<N;i+=len){ let wr=1, wi=0; const half=len>>1; for(let j=0;j<half;j++){ const k=i+j+half; const tr=wr*re[k]-wi*im[k]; const ti=wr*im[k]+wi*re[k]; const ur=re[i+j], ui=im[i+j]; re[k]=ur-tr; im[k]=ui-ti; re[i+j]=ur+tr; im[i+j]=ui+ti; const tmp=wr*wpr - wi*wpi; wi = wr*wpi + wi*wpr; wr = tmp; } } }
+  }
+
+  function fitCanvasToParent(canvas, ctx, borderPx){ const rect = canvas.getBoundingClientRect(); const dpr = Math.min(window.devicePixelRatio||1, 2); canvas.width = Math.round(rect.width * dpr); canvas.height = Math.round(rect.height * dpr); ctx.setTransform(dpr,0,0,dpr,0,0); if (borderPx) ctx.translate(borderPx,borderPx); }
+
+  function renderSpectrum(res, scaleMode){ fitCanvasToParent(spectrumCanvas, spectrumCtx, 0); const { freqs, magsDb, magsLin, sr } = res; const W = spectrumCanvas.width, H = spectrumCanvas.height; spectrumCtx.clearRect(0,0,W,H); drawGrid(spectrumCtx, W, H); drawAxesSpectrum(spectrumCtx, W, H, sr, scaleMode); const yVals = (scaleMode==='db')?magsDb:magsLin; const yMin=(scaleMode==='db')?-120:0; const yMax=(scaleMode==='db')?0:1; spectrumCtx.beginPath(); const n=freqs.length; for (let i=0;i<n;i++){ const x = (freqs[i]/(sr/2))*(W-60)+50; const y = map(yVals[i], yMin, yMax, H-40, 20); if(i===0) spectrumCtx.moveTo(x,y); else spectrumCtx.lineTo(x,y); } spectrumCtx.lineWidth = 2; spectrumCtx.strokeStyle = 'rgba(126,255,169,0.95)'; spectrumCtx.stroke(); }
+
+  function drawGrid(ctx, W, H){ ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; for(let i=0;i<=6;i++){ const y=map(i,0,6,20,H-40); ctx.beginPath(); ctx.moveTo(50,y); ctx.lineTo(W-10,y); ctx.stroke(); } for(let i=0;i<=10;i++){ const x=map(i,0,10,50,W-10); ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,H-40); ctx.stroke(); } ctx.restore(); }
+  function drawAxesSpectrum(ctx, W, H, sr, scaleMode){ ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(50,20); ctx.lineTo(50,H-40); ctx.lineTo(W-10,H-40); ctx.stroke(); ctx.fillStyle='#a5b1d8'; ctx.font='12px Inter, system-ui, Segoe UI, Roboto, Arial'; ctx.fillText('Frecuencia (Hz)', W/2-40, H-12); ctx.save(); ctx.translate(16,H/2+20); ctx.rotate(-Math.PI/2); ctx.fillText('Magnitud',0,0); ctx.restore(); const isDb=scaleMode==='db'; const ticks=isDb?[0,-20,-40,-60,-80,-100,-120]:[0,0.25,0.5,0.75,1]; for(const t of ticks){ const y=map(t,isDb?-120:0,isDb?0:1,H-40,20); ctx.fillText(String(t), 10, y+4); } ctx.restore(); }
+  function map(v,a,b,c,d){ return c + (v-a)*(d-c)/(b-a); }
+
+  async function renderSpectrogram(signal, sr, N, overlap, dynRangeDb, cmapName){
+    fitCanvasToParent(specCanvas, specCtx, 0); fitCanvasToParent(cbCanvas, cbCtx, 0); const W = specCanvas.width, H = specCanvas.height; specCtx.clearRect(0,0,W,H);
+    const hop = Math.max(1, Math.floor(N * (1 - overlap)));
+    // FIX: asegurar al menos 1 frame y rellenar con ceros si el audio es más corto que la ventana
+    const framesRaw = 1 + Math.floor((signal.length - N) / hop);
+    const frames = Math.max(1, framesRaw);
+    const maxCols = 4000; const stride = Math.max(1, Math.floor(frames / maxCols)); const cols = Math.min(frames, maxCols); const half = N>>1; const win = hann(N); const re = new Float64Array(N); const im = new Float64Array(N);
+    const powMatrix = new Float32Array(half * cols); let maxPow = 1e-18; for (let f=0, col=0; f<frames; f+=stride, col++){ const off = f * hop; for (let i=0;i<N;i++){ const s = off + i; const sample = (s < signal.length) ? signal[s] : 0; re[i]= sample * win[i]; im[i]=0; } fftRadix2(re, im); for (let k=0;k<half;k++){ const vr=re[k], vi=im[k]; const p=vr*vr+vi*vi; const idx = k*cols + col; powMatrix[idx]=p; if(p>maxPow) maxPow=p; } }
+    paintSpectrogram(powMatrix, cols, half, maxPow, dynRangeDb, cmapName);
+    specCtx.strokeStyle='rgba(255,255,255,0.25)'; specCtx.lineWidth=1.2; specCtx.beginPath(); specCtx.moveTo(50,10); specCtx.lineTo(50,H-30); specCtx.lineTo(W-20,H-30); specCtx.stroke(); specCtx.fillStyle='#a5b1d8'; specCtx.font='12px Inter, system-ui'; specCtx.fillText('Tiempo (s)', W/2-30, H-10); specCtx.save(); specCtx.translate(16, H/2+20); specCtx.rotate(-Math.PI/2); specCtx.fillText('Frecuencia (Hz)', 0, 0); specCtx.restore(); const totalTime = (signal.length / sr); for (let i=0;i<=10;i++){ const t=i/10*totalTime; const x = 50 + (W-70)* (t/totalTime); specCtx.fillText(t.toFixed(1), x-8, H-14); } for (let i=0;i<=6;i++){ const f=i/6*(sr/2); const y = 10 + (H-40)*(1 - f/(sr/2)); specCtx.fillText(f.toFixed(0), 10, y+4); }
+    drawColorbar(cmapName);
+    return { cols, half, dyn: dynRangeDb, maxPow, powMatrix, cmapName };
+  }
+
+  function paintSpectrogram(powMatrix, cols, half, maxPow, dynRangeDb, cmapName){
+    const W = specCanvas.width, H = specCanvas.height; const img = specCtx.createImageData(cols, half); const dyn = dynRangeDb||100; for (let k=0; k<half; k++){ for (let col=0; col<cols; col++){ const p = powMatrix[k*cols + col]; let db = 10*Math.log10(Math.max(p/maxPow,1e-18)); const norm = Math.max(0, Math.min(1, 1 + db/dyn)); const [r,g,b] = colormap(cmapName, norm); const y = (half-1-k); const i = (y*cols + col) * 4; img.data[i]=r; img.data[i+1]=g; img.data[i+2]=b; img.data[i+3]=255; } }
+    const tmpCanvas = document.createElement('canvas'); tmpCanvas.width=cols; tmpCanvas.height=half; const tmpCtx = tmpCanvas.getContext('2d'); tmpCtx.putImageData(img,0,0); specCtx.imageSmoothingEnabled = false; specCtx.drawImage(tmpCanvas, 50, 10, W-70, H-40);
+  }
+
+  function rerenderSpectrogram(prev, dyn, cmapName){ const { cols, half, maxPow, powMatrix } = prev; fitCanvasToParent(specCanvas, specCtx, 0); paintSpectrogram(powMatrix, cols, half, maxPow, dyn, cmapName); const W=specCanvas.width, H=specCanvas.height; specCtx.strokeStyle='rgba(255,255,255,0.25)'; specCtx.lineWidth=1.2; specCtx.beginPath(); specCtx.moveTo(50,10); specCtx.lineTo(50,H-30); specCtx.lineTo(W-20,H-30); specCtx.stroke(); specCtx.fillStyle='#a5b1d8'; specCtx.font='12px Inter, system-ui'; specCtx.fillText('Tiempo (s)', W/2-30, H-10); specCtx.save(); specCtx.translate(16, H/2+20); specCtx.rotate(-Math.PI/2); specCtx.fillText('Frecuencia (Hz)', 0, 0); specCtx.restore(); cbTop.textContent = '0 dB'; cbBottom.textContent = '-' + dyn + ' dB'; drawColorbar(cmapName); }
+
+  function drawColorbar(cmapName){ const W = cbCanvas.width, H = cbCanvas.height; const img = cbCtx.createImageData(1, H); for (let y=0;y<H;y++){ const t=1 - y/(H-1); const [r,g,b]=colormap(cmapName, t); const i=y*4; img.data[i]=r; img.data[i+1]=g; img.data[i+2]=b; img.data[i+3]=255; } const tmp=document.createElement('canvas'); tmp.width=1; tmp.height=H; const tctx=tmp.getContext('2d'); tctx.putImageData(img,0,0); cbCtx.imageSmoothingEnabled=false; cbCtx.clearRect(0,0,W,H); cbCtx.drawImage(tmp,0,0,W,H); }
+
+  function colormap(name, t){ t = Math.max(0, Math.min(1, t)); switch(name){ case 'turbo': return colormapTurbo(t); case 'viridis': return lerpStops([[0,'#440154'],[0.25,'#3b528b'],[0.5,'#21918c'],[0.75,'#5ec962'],[1,'#fde725']], t); case 'inferno': return lerpStops([[0,'#000004'],[0.25,'#2c105c'],[0.5,'#7c1d6f'],[0.75,'#f1605d'],[1,'#fcffa4']], t); case 'magma': return lerpStops([[0,'#000004'],[0.2,'#1b0c41'],[0.4,'#4f0d73'],[0.6,'#9c179e'],[0.8,'#ed7953'],[1,'#fbfbd0']], t); case 'plasma': return lerpStops([[0,'#0d0887'],[0.25,'#7e03a8'],[0.5,'#cc4778'],[0.75,'#f89441'],[1,'#f0f921']], t); case 'gray': return lerpStops([[0,'#000000'],[1,'#ffffff']], t); case 'heat': return lerpStops([[0,'#000000'],[0.25,'#330072'],[0.5,'#0077ff'],[0.7,'#00ffcc'],[0.85,'#ffff00'],[1,'#ffffff']], t); default: return colormapTurbo(t);} }
+
+  function hexToRgb(hex){ const h = hex.replace('#',''); const bigint = parseInt(h, 16); if(h.length===6){ return [ (bigint>>16)&255, (bigint>>8)&255, bigint&255 ]; } return [255,255,255]; }
+  function lerp(a,b,t){ return a + (b-a)*t; }
+  function lerpStops(stops, t){ // stops: [[pos, '#rrggbb'], ...]
+    for(let i=1;i<stops.length;i++){ const [p1,c1] = stops[i-1]; const [p2,c2] = stops[i]; if (t<=p2){ const tt=(t-p1)/(p2-p1); const [r1,g1,b1]=hexToRgb(c1); const [r2,g2,b2]=hexToRgb(c2); return [ Math.round(lerp(r1,r2,tt)), Math.round(lerp(g1,g2,tt)), Math.round(lerp(b1,b2,tt)) ]; } }
+    const last = stops[stops.length-1][1]; return hexToRgb(last);
+  }
+
+  function colormapTurbo(t){ // LUT de 64 muestras
+    const k = [
+      [0.18995,0.07176,0.23217],[0.19483,0.08339,0.26149],[0.19956,0.09498,0.29024],[0.20415,0.10652,0.31844],
+      [0.20860,0.11802,0.34607],[0.21291,0.12947,0.37314],[0.21708,0.14087,0.39964],[0.22111,0.15223,0.42558],
+      [0.22500,0.16354,0.45096],[0.22875,0.17481,0.47578],[0.23236,0.18603,0.50004],[0.23582,0.19720,0.52373],
+      [0.23915,0.20833,0.54686],[0.24234,0.21941,0.56942],[0.24539,0.23044,0.59142],[0.24830,0.24143,0.61286],
+      [0.25107,0.25237,0.63374],[0.25369,0.26327,0.65406],[0.25618,0.27412,0.67381],[0.25853,0.28492,0.69301],
+      [0.26074,0.29568,0.71164],[0.26280,0.30639,0.72972],[0.26473,0.31706,0.74723],[0.26652,0.32768,0.76419],
+      [0.26816,0.33825,0.78059],[0.26967,0.34878,0.79643],[0.27103,0.35926,0.81172],[0.27226,0.36970,0.82645],
+      [0.27334,0.38008,0.84063],[0.27429,0.39043,0.85426],[0.27509,0.40072,0.86734],[0.27576,0.41097,0.87986],
+      [0.27628,0.42118,0.89184],[0.27667,0.43134,0.90327],[0.27691,0.44145,0.91415],[0.27701,0.45152,0.92449],
+      [0.27698,0.46153,0.93428],[0.27680,0.47151,0.94353],[0.27648,0.48144,0.95223],[0.27603,0.49132,0.96039],
+      [0.27543,0.50115,0.96801],[0.27469,0.51094,0.97509],[0.27381,0.52069,0.98165],[0.27273,0.53040,0.98769],
+      [0.27106,0.54015,0.99328],[0.26878,0.54995,0.99839],[0.26592,0.55979,1.00000],[0.26252,0.56967,0.99702],
+      [0.25862,0.57958,0.98939],[0.25425,0.58950,0.97719],[0.24946,0.59943,0.96053],[0.24427,0.60937,0.93953],
+      [0.23874,0.61931,0.91435],[0.23288,0.62923,0.88519],[0.22676,0.63913,0.85229],[0.22039,0.64901,0.81589],
+      [0.21382,0.65886,0.77631],[0.20708,0.66866,0.73391],[0.20021,0.67842,0.68903],[0.19326,0.68812,0.64202],
+      [0.18625,0.69775,0.59321],[0.17923,0.70732,0.54294],[0.17223,0.71680,0.49158],[0.16529,0.72620,0.43937],
+      [0.15844,0.73551,0.38655],[0.15173,0.74472,0.33338],[0.14519,0.75381,0.28019],[0.13886,0.76279,0.22725],
+      [0.13278,0.77165,0.17481],[0.12698,0.78037,0.12319],[0.12151,0.78896,0.07274],[0.11639,0.79740,0.02381]
+    ];
+    const idx = Math.max(0, Math.min(63, Math.round(t*63))); const c=k[idx]; return [Math.round(c[0]*255), Math.round(c[1]*255), Math.round(c[2]*255)];
+  }
+
+  function downloadBlob(blob, filename){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; document.body.appendChild(a); a.click(); a.remove(); }
+
+  window.addEventListener('resize', () => {
+    if (lastChannelData) drawWaveform(lastChannelData, (audioBuffer||{}).sampleRate||44100);
+    if (lastSpectrum) renderSpectrum(lastSpectrum, opts.scale.value);
+    if (lastSpectrogram) rerenderSpectrogram(lastSpectrogram, parseInt(dynRange.value,10), cmapSel.value); else drawColorbar(cmapSel.value);
+  });
+})();
+</script>
+</body>
+</html>
