@@ -106,7 +106,26 @@
 
     details { background: rgba(255,255,255,0.03); border: 1px solid var(--stroke); border-radius: 12px; padding: 10px 12px; }
     summary { cursor: pointer; font-weight: 800; color: #cfe0ff; font-family: 'Space Grotesk', sans-serif; }
-  </style>
+  
+/* === Fix: contraste de desplegables ===
+   - Texto del select (cerrado): blanco (hereda var(--text)).
+   - Lista desplegable (opciones): texto negro sobre fondo blanco para máxima legibilidad.
+   Nota: El estilo de los menús nativos depende del SO/navegador; esto mejora la mayoría de casos (Chrome, Edge, Firefox).
+*/
+select { color: var(--text); }
+select option, select optgroup {
+  color: #0b0f1f;            /* negro profundo para legibilidad */
+  background-color: #ffffff; /* fondo claro en lista desplegable */
+}
+/* Estado seleccionado en la lista (cuando está abierta) */
+select option:checked {
+  background-color: #e8f3ff;
+  color: #000000;
+}
+/* Edge/IE: evita icono por defecto si hiciera conflicto de color */
+select::-ms-expand { display: none; }
+
+</style>
 </head>
 <body>
   <div class="hero">
@@ -467,5 +486,11 @@
   });
 })();
 </script>
+
+<footer class="firma">
+  Hecho por <a href="https://github.com/SalvaGaR" target="_blank" rel="noopener">SalvaGaR</a>
+</footer>
+
+
 </body>
 </html>
