@@ -1,5 +1,5 @@
 # audio-fft-webapp
-🎵 Analizador de Audio en el Navegador
+🎵 Analizador de Audio
 
 Aplicación web 100 % cliente (sin backend) que permite subir un archivo de audio y obtener:
 
